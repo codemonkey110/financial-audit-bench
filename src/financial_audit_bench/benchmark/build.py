@@ -46,7 +46,9 @@ SNAPSHOT_SOURCES = (
 
 def pin_apt_snapshot(dockerfile: Path) -> None:
     lines = dockerfile.read_text().splitlines()
-    index = next(i for i, line in enumerate(lines) if line.startswith("ARG LIBREOFFICE_CALC_VERSION="))
+    index = next((i for i, line in enumerate(lines) if line.startswith("ARG LIBREOFFICE_CALC_VERSION=")), None)
+    if index is None:
+        return  # Local task images without the dataset's pin build as written.
     lines.insert(index + 1, SNAPSHOT_SOURCES)
     dockerfile.write_text("\n".join(lines) + "\n")
 

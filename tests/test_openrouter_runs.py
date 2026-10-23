@@ -122,3 +122,11 @@ def test_task_images_resolve_apt_from_the_release_snapshot(tmp_path):
     assert lines[1].startswith("ARG LIBREOFFICE_CALC_VERSION=")
     assert "snapshot.debian.org/archive/debian/" in lines[2]
     assert lines[3] == "RUN apt-get update"
+
+
+def test_task_images_without_the_dataset_pin_are_left_unchanged(tmp_path):
+    dockerfile = tmp_path / "Dockerfile"
+    original = "FROM python:3.12-slim\nRUN apt-get update\n"
+    dockerfile.write_text(original)
+    pin_apt_snapshot(dockerfile)
+    assert dockerfile.read_text() == original

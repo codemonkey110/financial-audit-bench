@@ -44,7 +44,7 @@ Set `FAB_OPENROUTER_STREAM=1` in `.env` for OpenRouter models. Long silent reaso
 can otherwise hit OpenRouter's upstream idle timeout, which returns an empty reply.
 Optional settings:
 
-- `FAB_OPENROUTER_PROVIDER`: JSON provider preferences, e.g.
+- `FAB_OPENROUTER_PROVIDER`: JSON provider preferences for agent calls (the judge is not pinned), e.g.
   `{"only": ["google-vertex/us"]}`.
 - `FAB_JUDGE_MODEL`: route the judge through another provider, e.g.
   `openrouter/openai/gpt-5.6-luna`. The judge model stays the same; the published

@@ -87,11 +87,25 @@ def test_streamed_reasoning_text_is_merged_and_signed_blocks_kept():
     ]
 
 
-def test_openrouter_provider_preferences_are_sent(monkeypatch):
-    monkeypatch.setenv("FAB_OPENROUTER_PROVIDER", '{"only": ["google-vertex/us"]}')
-    request = llms._request(model=MODEL, messages=[], reasoning_effort="medium")
-    assert request["extra_body"] == {"provider": {"only": ["google-vertex/us"]}}
-    assert "reasoning_effort" in request["allowed_openai_params"]
+def test_provider_preferences_pin_agent_calls_but_not_the_judge(monkeypatch):
+    monkeypatch.setenv("FAB_OPENROUTER_PROVIDER", '{"only": ["google-ai-studio"]}')
+    requests = []
+
+    async def acompletion(**request):
+        requests.append(request)
+        return litellm_response("Done.")
+
+    def completion(**request):
+        requests.append(request)
+        return litellm_response('{"ok": true}')
+
+    monkeypatch.setattr(llms, "acompletion", acompletion)
+    monkeypatch.setattr(llms, "completion", completion)
+    asyncio.run(llms.acomplete(model=MODEL, messages=[], reasoning_effort="medium"))
+    llms.complete(model="openrouter/openai/judge", messages=[], reasoning_effort="medium")
+    assert requests[0]["extra_body"] == {"provider": {"only": ["google-ai-studio"]}}
+    assert "reasoning_effort" in requests[0]["allowed_openai_params"]
+    assert "extra_body" not in requests[1]
 
 
 def empty_reply() -> LLMResponse:

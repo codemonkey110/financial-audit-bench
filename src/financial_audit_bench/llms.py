@@ -83,6 +83,10 @@ def complete(*, model: str, messages: list[dict[str, Any]],
 async def acomplete(*, model: str, messages: list[dict[str, Any]],
                     api_base: str | None = None, **kwargs: Any) -> LLMResponse:
     """Cancellable asynchronous model call for agent trials."""
+    # FAB_OPENROUTER_PROVIDER pins the agent's OpenRouter routing (JSON provider
+    # preferences, e.g. {"only": ["google-ai-studio"]}); judge calls stay unpinned.
+    if model.startswith("openrouter/") and os.environ.get("FAB_OPENROUTER_PROVIDER"):
+        kwargs.setdefault("extra_body", {})["provider"] = json.loads(os.environ["FAB_OPENROUTER_PROVIDER"])
     request = _request(model=model, messages=messages, api_base=api_base, **kwargs)
     start = time.perf_counter()
     if model.startswith("gpt-") and api_base is None:
@@ -181,10 +185,6 @@ def _request(
         if "reasoning_effort" not in allowed:
             allowed.append("reasoning_effort")
         kwargs["allowed_openai_params"] = allowed
-    # FAB_OPENROUTER_PROVIDER pins OpenRouter routing (JSON provider preferences), e.g.
-    # {"order": ["google-ai-studio"], "allow_fallbacks": false}.
-    if model.startswith("openrouter/") and os.environ.get("FAB_OPENROUTER_PROVIDER"):
-        kwargs.setdefault("extra_body", {})["provider"] = json.loads(os.environ["FAB_OPENROUTER_PROVIDER"])
     request = {
         "model": model, "messages": messages, "tools": tools,
         "tool_choice": tool_choice, **kwargs,

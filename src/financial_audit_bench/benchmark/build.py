@@ -31,6 +31,28 @@ def copy_inputs(binder: str, target: Path, hashes: dict[str, str], root: Path) -
         copy(source / folder, target / folder, hashes, root)
 
 
+# Debian has dropped the dependencies of the pinned libreoffice-calc build; resolve
+# packages from the archive as of the dataset release so the pin still installs.
+DEBIAN_SNAPSHOT = "20260924T000000Z"
+SNAPSHOT_SOURCES = (
+    'RUN sed -i -e "s|http://deb.debian.org/debian-security|'
+    f'http://snapshot.debian.org/archive/debian-security/{DEBIAN_SNAPSHOT}|" '
+    '-e "s|http://deb.debian.org/debian|'
+    f'http://snapshot.debian.org/archive/debian/{DEBIAN_SNAPSHOT}|" '
+    "/etc/apt/sources.list.d/debian.sources "
+    '&& echo "Acquire::Check-Valid-Until false;" > /etc/apt/apt.conf.d/99snapshot'
+)
+
+
+def pin_apt_snapshot(dockerfile: Path) -> None:
+    lines = dockerfile.read_text().splitlines()
+    index = next((i for i, line in enumerate(lines) if line.startswith("ARG LIBREOFFICE_CALC_VERSION=")), None)
+    if index is None:
+        return  # Local task images without the dataset's pin build as written.
+    lines.insert(index + 1, SNAPSHOT_SOURCES)
+    dockerfile.write_text("\n".join(lines) + "\n")
+
+
 def prepare(tasks: list, root: Path, *, dataset_root: Path | None = None) -> Path:
     """Replace the fixed Harbor build only after its replacement is complete."""
     if not tasks:
@@ -52,6 +74,7 @@ def prepare(tasks: list, root: Path, *, dataset_root: Path | None = None) -> Pat
             if not template.is_file():
                 template = source / "environment/workspace" / rubric["output"]
             copy(template, target / "tests/template.xlsx", hashes, dataset_root)
+            pin_apt_snapshot(target / "environment/Dockerfile")
         manifest = {"harbor_version": "0.22.0", "task_version": "1.0.0",
                     "task_ids": [task.short_name for task in tasks],
                     "source_sha256": hashes}

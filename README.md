@@ -38,6 +38,20 @@ Pass the model name directly, including its provider prefix when needed
 (e.g. `openrouter/google/gemini-3.8-flash`). Reasoning effort defaults to `medium`;
 use `--num-workers` to set the number of concurrent tasks.
 
+### OpenRouter
+
+Set `FAB_OPENROUTER_STREAM=1` in `.env` for OpenRouter models. Long silent reasoning
+can otherwise hit OpenRouter's upstream idle timeout, which returns an empty reply.
+Optional settings:
+
+- `FAB_OPENROUTER_PROVIDER`: JSON provider preferences for agent calls (the judge is not pinned), e.g.
+  `{"only": ["google-vertex/us"]}`.
+- `FAB_JUDGE_MODEL`: route the judge through another provider, e.g.
+  `openrouter/openai/gpt-5.6-luna`. The judge model stays the same; the published
+  results used OpenAI's Responses API directly.
+
+`.env` does not override variables already exported in your shell.
+
 Grading starts after each model job finishes. Recalculation uses shared batches
 of up to 32 workbooks, followed by parallel grading controlled by `--num-workers`.
 

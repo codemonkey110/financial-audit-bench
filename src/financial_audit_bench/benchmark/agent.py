@@ -22,6 +22,7 @@ from financial_audit_bench.defaults import DEFAULT_MAX_MODEL_CALLS, DEFAULT_MODE
 from financial_audit_bench.llms import acomplete, routed_litellm_model
 
 COMPLETION_SIGNAL = "<<TASK_FINISHED>>"
+MAX_EMPTY_RESPONSES = 5
 COMMAND_TIMEOUT_SECONDS = 600
 BASH_TOOL_SCHEMA = {
     "type": "function",
@@ -108,6 +109,7 @@ class AuditAgent(BaseAgent):
             temporary.replace(self.logs_dir / "trajectory.json")
 
         save()
+        empty_streak = 0
         try:
             for call_number in range(1, self.max_model_calls + 1):
                 context.metadata["model_calls"] = call_number
@@ -128,7 +130,10 @@ class AuditAgent(BaseAgent):
                             timestamp=datetime.now(UTC).isoformat(), model_name=response.model,
                             metrics={"prompt_tokens": inputs, "completion_tokens": outputs,
                                      "cached_tokens": cached, "cost_usd": response.cost,
-                                     "extra": {"usage": usage, "latency_seconds": response.latency_seconds}})
+                                     "extra": {"usage": usage, "latency_seconds": response.latency_seconds,
+                                               "provider": response.raw.get("provider"),
+                                               "finish_reason": ((response.raw.get("choices") or [{}])[0]
+                                                                 .get("finish_reason"))}})
                 steps.append(step)
                 messages.append(response.to_assistant_message())
                 if response.tool_calls:
@@ -159,6 +164,10 @@ class AuditAgent(BaseAgent):
                     ))
                     messages.append({"role": "tool", "tool_call_id": tool_call["id"], "name": function["name"], "content": content})
                     save()
+                # A provider stuck returning nothing would otherwise burn the whole call budget.
+                empty_streak = 0 if (response.content.strip() or response.tool_calls) else empty_streak + 1
+                if empty_streak >= MAX_EMPTY_RESPONSES:
+                    raise RuntimeError(f"{MAX_EMPTY_RESPONSES} consecutive empty model responses")
                 if not response.tool_calls:
                     if response.content.strip().splitlines()[-1:] == [COMPLETION_SIGNAL]:
                         context.metadata["termination_reason"] = "completed"

@@ -1,13 +1,19 @@
+import asyncio
+import json
+import os
 import time
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from litellm import acompletion, completion, completion_cost
+import litellm
+from litellm import acompletion, completion, completion_cost, stream_chunk_builder
 from openai import AsyncOpenAI, OpenAI
 
 MODEL_REQUEST_TIMEOUT_SECONDS = 600
 MODEL_REQUEST_MAX_RETRIES = 2
+UPSTREAM_ERROR_RETRIES = 2
+TRANSIENT_BACKOFF_SECONDS = (10, 30, 60)
 
 
 @dataclass(frozen=True)
@@ -83,8 +89,72 @@ async def acomplete(*, model: str, messages: list[dict[str, Any]],
         async with AsyncOpenAI(max_retries=MODEL_REQUEST_MAX_RETRIES) as client:
             response = await client.responses.create(**request)
         return _openai_response(response, model, time.perf_counter() - start)
-    response = await acompletion(**request)
-    return _litellm_response(response, model, time.perf_counter() - start)
+    for attempt in range(UPSTREAM_ERROR_RETRIES + 1):
+        response = await _with_transient_backoff(model, request, messages)
+        result = _litellm_response(response, model, time.perf_counter() - start)
+        try:
+            _raise_upstream_error(result)
+            return result
+        except UpstreamProviderError:
+            if attempt == UPSTREAM_ERROR_RETRIES:
+                raise
+
+
+async def _with_transient_backoff(model: str, request: dict[str, Any], messages: list[dict[str, Any]]):
+    """LiteLLM retries immediately; OpenRouter admission-control 429s ask for ~10 s."""
+    for delay in (*TRANSIENT_BACKOFF_SECONDS, None):
+        try:
+            if model.startswith("openrouter/") and os.environ.get("FAB_OPENROUTER_STREAM") == "1":
+                return await _streamed_completion(request, messages)
+            return await acompletion(**request)
+        except (litellm.RateLimitError, litellm.APIConnectionError, litellm.InternalServerError,
+                litellm.ServiceUnavailableError, litellm.Timeout):
+            if delay is None or not model.startswith("openrouter/"):
+                raise
+            await asyncio.sleep(delay)
+
+
+async def _streamed_completion(request: dict[str, Any], messages: list[dict[str, Any]]):
+    """Stream, then rebuild one response. Long silent reasoning makes OpenRouter's
+    non-streaming upstream connection time out; the request itself is unchanged."""
+    chunks, details = [], []
+    stream = await acompletion(**request, stream=True, stream_options={"include_usage": True})
+    async for chunk in stream:
+        chunks.append(chunk)
+        for choice in chunk.choices or []:
+            delta = choice.delta
+            for item in (getattr(delta, "reasoning_details", None)
+                         or (getattr(delta, "provider_specific_fields", None) or {}).get("reasoning_details")
+                         or []):
+                _merge_reasoning_detail(details, dict(item))
+    response = stream_chunk_builder(chunks, messages=messages)
+    if details:
+        # stream_chunk_builder drops reasoning details; Gemini needs the signed blocks replayed.
+        response.choices[0].message.reasoning_details = details
+    return response
+
+
+def _merge_reasoning_detail(details: list[dict[str, Any]], item: dict[str, Any]) -> None:
+    previous = details[-1] if details else None
+    if (previous and item.get("type") == previous.get("type") == "reasoning.text"
+            and item.get("index") == previous.get("index")):
+        previous["text"] = (previous.get("text") or "") + (item.get("text") or "")
+        if item.get("signature"):
+            previous["signature"] = item["signature"]
+        return
+    details.append(item)
+
+
+class UpstreamProviderError(RuntimeError):
+    pass
+
+
+def _raise_upstream_error(response: "LLMResponse") -> None:
+    # OpenRouter reports some upstream failures as an empty "stop" choice.
+    choices = response.raw.get("choices") or [{}]
+    error = (choices[0].get("provider_specific_fields") or {}).get("error")
+    if error and not response.content and not response.tool_calls:
+        raise UpstreamProviderError(f"OpenRouter upstream error: {error}")
 
 
 def _request(
@@ -105,11 +175,16 @@ def _request(
     # Direct Claude requests opt into automatic prompt caching.
     if model.startswith(("claude-", "anthropic/")):
         kwargs.setdefault("cache_control", {"type": "ephemeral"})
-    if "deepseek" in model.lower():
+    # LiteLLM rejects reasoning_effort for OpenRouter models missing from its catalog.
+    if "deepseek" in model.lower() or model.startswith("openrouter/"):
         allowed = list(kwargs.get("allowed_openai_params") or [])
         if "reasoning_effort" not in allowed:
             allowed.append("reasoning_effort")
         kwargs["allowed_openai_params"] = allowed
+    # FAB_OPENROUTER_PROVIDER pins OpenRouter routing (JSON provider preferences), e.g.
+    # {"order": ["google-ai-studio"], "allow_fallbacks": false}.
+    if model.startswith("openrouter/") and os.environ.get("FAB_OPENROUTER_PROVIDER"):
+        kwargs.setdefault("extra_body", {})["provider"] = json.loads(os.environ["FAB_OPENROUTER_PROVIDER"])
     request = {
         "model": model, "messages": messages, "tools": tools,
         "tool_choice": tool_choice, **kwargs,
@@ -126,12 +201,14 @@ def _litellm_response(response, model: str, latency_seconds: float) -> LLMRespon
     message = response.choices[0].message
     raw = response.to_dict()
 
+    usage = raw.get("usage")
     try:
         cost = completion_cost(completion_response=response)
     except Exception:
         cost = None
-
-    usage = raw.get("usage")
+    # OpenRouter reports billed cost; use it when LiteLLM cannot price the model.
+    if not cost and isinstance(usage, dict) and isinstance(usage.get("cost"), (int, float)):
+        cost = float(usage["cost"])
     raw_tool_calls = message.tool_calls or []
     tool_calls = [
         tool_call.to_dict() if hasattr(tool_call, "to_dict") else dict(tool_call)

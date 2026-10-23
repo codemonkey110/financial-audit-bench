@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from typing import Any
 
 from .evidence_contract import criterion_character_limit, validate_cell_count
 
-JUDGE_MODEL = "gpt-5.6-luna"
+# FAB_JUDGE_MODEL routes the same judge through another provider (e.g. OpenRouter).
+JUDGE_MODEL = os.environ.get("FAB_JUDGE_MODEL", "gpt-5.6-luna")
 JUDGE_REASONING_EFFORT = "medium"
 
 

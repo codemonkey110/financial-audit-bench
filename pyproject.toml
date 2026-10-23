@@ -8,6 +8,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Modus Audit Inc." }]
 requires-python = ">=3.12, <3.14"
 dependencies = [
+    "certifi>=2026.10.19",
     "harbor==0.22.0",
     "huggingface-hub>=0.34,<2",
     "litellm>=1.100.0",
@@ -45,3 +46,6 @@ module-name = "financial_audit_bench"
 [build-system]
 requires = ["uv_build>=0.11.16,<0.12.0"]
 build-backend = "uv_build"
+
+[tool.uv]
+required-version = ">=0.13.5"

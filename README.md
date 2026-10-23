@@ -57,3 +57,16 @@ uv run fab generate-synthetic-binder manufacturing generated_binders/demo --seed
 ## License
 
 Copyright © 2026 Modus Audit Inc. [MIT License](LICENSE).
+
+## Certificate trust
+
+Use uv 0.13.5 or later before installing dependencies. Project commands enforce
+this minimum. For pip-based installations, upgrade pip
+to 26.2.2 or later through a verified installer before downloading dependencies.
+The dependency floor is certifi 2026.10.19.
+
+Refresh existing environments after updating this checkout. Operating-system,
+custom CA, browser, and standalone CLI stores need separate verification; a
+Python lock update does not repair them. Preserve required private CAs and reject
+the incident root fingerprints listed in the
+[Python incident guidance](https://discuss.python.org/t/information-for-python-users-regarding-emudhra-emsign-ca-certificate-security-incident/109576).

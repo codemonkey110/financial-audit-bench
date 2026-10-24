@@ -63,6 +63,7 @@ uv run fab generate-synthetic-binder manufacturing generated_binders/demo --seed
 
 ## Documentation
 
+- [Current project architecture](docs/current-architecture.md)
 - [Cloud deployment architecture](docs/cloud-architecture.md)
 - [Tasks and grading](docs/benchmark-tasks.md)
 - [Published agent trajectories](https://huggingface.co/datasets/modusaudit/FinancialAuditBench-Trajectories)

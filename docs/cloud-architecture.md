@@ -81,13 +81,14 @@ retries cannot overwrite successful results from a different attempt.
 
 ## Mapping from the current project
 
-The current CLI coordinates runs and starts Harbor as a subprocess;
-`benchmark/build.py` prepares task files, and `benchmark/grading/local.py`
-performs host-side grading. In the target design, these responsibilities move
-behind the coordinator, execution workers, and grading workers respectively.
-The existing pinned dataset revision, prepared-task manifest, Harbor job
-artifacts, and local grading outputs provide useful formats to preserve during
-migration.
+For a diagram of the implemented local workflows, see the
+[current project architecture](current-architecture.md). The current CLI
+coordinates runs and starts Harbor as a subprocess; `benchmark/build.py`
+prepares task files, and `benchmark/grading/local.py` performs host-side
+grading. In the target design, these responsibilities move behind the
+coordinator, execution workers, and grading workers respectively. The existing
+pinned dataset revision, prepared-task manifest, Harbor job artifacts, and
+local grading outputs provide useful formats to preserve during migration.
 
 ## Suggested migration sequence
 

@@ -14,10 +14,12 @@ flowchart LR
     API --> DB[(Job metadata database)]
     API --> RunQueue[[Execution queue]]
 
-    RunQueue --> AgentWorker[Isolated Harbor worker]
+    RunQueue --> AgentWorker[Harbor execution worker<br/>Harbor + AuditAgent]
     Dataset[Versioned task dataset] --> AgentWorker
-    Secrets[Secrets manager] --> AgentWorker
+    Secrets[Secrets manager] -->|Model credentials| AgentWorker
     AgentWorker -->|Model requests| LLM[LLM providers]
+    AgentWorker -->|Launch, execute, collect| TaskContainers[Ephemeral per-trial task containers]
+    TaskContainers -->|Workspace artifacts| AgentWorker
     AgentWorker -->|Traces, workbooks, logs| Storage[(Object storage)]
     AgentWorker -->|Completion event| GradeQueue[[Grading queue]]
     AgentWorker -->|Progress and status| DB
@@ -42,12 +44,21 @@ flowchart LR
   revision, requested model and options, timestamps, lifecycle state, worker
   attempts, and artifact references. Store metadata, not workbooks or traces.
 - **Execution queue and Harbor workers:** Queue independently executable runs.
-  Workers claim jobs, prepare the pinned task assets, execute Harbor in an
-  isolated environment, and report progress. Bound CPU, memory, runtime,
-  concurrency, and outbound network access.
+  A worker claims a job, prepares the pinned task assets, and runs Harbor with
+  its `AuditAgent`. Harbor launches an ephemeral isolated task container for
+  each trial; task files and a temporary workspace are made available there.
+  The agent executes model-requested bash commands in that task environment.
+  Bound worker and container CPU, memory, disk, runtime, and concurrency.
+- **Task container boundary:** Treat task commands as untrusted workload.
+  Run containers unprivileged, avoid exposing the host container-runtime socket
+  or unrelated host paths, and restrict network egress to what the task requires.
+  Keep model-provider credentials in the worker process that makes model calls;
+  do not pass them into task containers.
 - **Grading queue and grading workers:** Start grading after execution has
   completed and artifacts are available. Package LibreOffice and the rubric
-  grader in the worker image. Keep grading independently scalable and retryable.
+  grader in the worker image. If semantic checks use a judge model, scope its
+  credentials to the grading worker. Keep grading independently scalable and
+  retryable.
 - **Versioned task dataset:** Preserve immutable dataset revisions and make the
   revision used by each run explicit, matching the current revision-pinned
   Hugging Face dataset flow.
@@ -64,20 +75,27 @@ flowchart LR
 ## Job lifecycle and reliability
 
 1. The API validates a request and creates a job in a queued state.
-2. An execution message references the job; the worker fetches the pinned
-   dataset revision and credentials, then runs the selected tasks.
-3. The worker uploads outputs and records artifact references and execution
-   status. Successful runs requesting grading are sent to the grading queue;
-   other runs become complete.
-4. A grading worker downloads the required workbooks and task assets, grades
+2. An execution worker claims the job, fetches the pinned dataset revision,
+   prepares Harbor's task catalog, and obtains only the credentials it needs.
+3. Harbor launches a fresh task container for each trial. The worker/agent
+   process makes model-provider requests; task bash commands execute in the
+   isolated container workspace.
+4. Harbor returns trial outputs to the worker. The worker uploads artifacts
+   under job-, attempt-, and trial-scoped paths before reporting execution
+   complete. Successful runs requesting grading are sent to the grading queue;
+   other runs become complete. Task containers are discarded after collection.
+5. A grading worker downloads the required workbooks and task assets, grades
    them, uploads reports and scores, then records the final status.
-5. The API returns current status and authorized artifact links to the user.
+6. The API returns current status and authorized artifact links to the user.
 
 Queue delivery should be treated as at-least-once. Make state transitions and
 artifact writes idempotent using job and attempt identifiers. Record failures
 and retry counts; distinguish retryable infrastructure errors from invalid
-requests and task failures. Support cancellation and timeouts, and ensure
-retries cannot overwrite successful results from a different attempt.
+requests and task failures. Retry failed work in fresh task containers and
+ensure retries cannot overwrite successful results from a different attempt.
+Support cancellation and timeouts. Scale execution and grading worker pools
+independently from queue depth, while respecting provider rate limits and
+configured resource ceilings.
 
 ## Mapping from the current project
 
